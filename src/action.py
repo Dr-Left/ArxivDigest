@@ -295,12 +295,19 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
+    # Check for API key in environment variable, prompt if not found
     if "OPENAI_API_KEY" not in os.environ:
-        raise RuntimeError("No openai api key found")
-    openai.api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = input("OPENAI_API_KEY not found in environment. Please enter your OpenAI API key: ").strip()
+        if not api_key:
+            raise RuntimeError("No OpenAI API key provided")
+        os.environ["OPENAI_API_KEY"] = api_key
+        print("API key set from user input")
+    else:
+        print("Using OPENAI_API_KEY from environment variable")
+    # API key is read from environment by utils.py and model_manager.py
 
-    topic = config["topic"]
-    categories = config["categories"]
+    topic = config.get("topic", "Computer Science")
+    categories = config.get("categories", [])
     from_email = os.environ.get("FROM_EMAIL")
     to_email = os.environ.get("TO_EMAIL")
     threshold = config["threshold"]

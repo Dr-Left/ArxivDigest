@@ -37,6 +37,7 @@ class ModelManager:
     def __init__(self):
         self.providers = {}
         self.available_models = {}
+        self.openai_client = None
 
     def register_openai(self, api_key: str) -> bool:
         """Register OpenAI as a provider."""
@@ -45,9 +46,10 @@ class ModelManager:
             return False
 
         try:
-            openai.api_key = api_key
+            # Use new OpenAI API (1.0.0+)
+            self.openai_client = openai.OpenAI(api_key=api_key)
             # Test API connection
-            models = openai.Model.list()
+            models = self.openai_client.models.list()
             self.providers[ModelProvider.OPENAI] = True
             self.available_models[ModelProvider.OPENAI] = [model.id for model in models.data]
             logger.info(f"Successfully connected to OpenAI API. Available models: {self.available_models[ModelProvider.OPENAI]}")
@@ -263,7 +265,7 @@ class ModelManager:
         # Process based on provider
         if provider == ModelProvider.OPENAI:
             try:
-                response = openai.ChatCompletion.create(
+                response = self.openai_client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": "You are a specialist in mechanistic interpretability and AI safety."},
@@ -389,7 +391,7 @@ class ModelManager:
             analysis = None
             
             if provider == ModelProvider.OPENAI:
-                response = openai.ChatCompletion.create(
+                response = self.openai_client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": "You are a specialist in AI for design automation."},

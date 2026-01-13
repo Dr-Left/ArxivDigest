@@ -13,19 +13,26 @@ import tqdm
 import copy
 
 # Handle both old and new OpenAI SDK versions
+# Check OpenAI version to determine which API to use
 try:
-    from openai import openai_object
-    StrOrOpenAIObject = Union[str, openai_object.OpenAIObject]
-    OPENAI_OLD_API = True
-except ImportError:
+    import openai
+    # Check if we have the new API (1.0.0+) by looking for OpenAI client class
+    if hasattr(openai, 'OpenAI'):
+        OPENAI_OLD_API = False
+        StrOrOpenAIObject = Union[str, Dict[str, Any]]
+    else:
+        # Old API (< 1.0.0)
+        from openai import openai_object
+        StrOrOpenAIObject = Union[str, openai_object.OpenAIObject]
+        OPENAI_OLD_API = True
+except (ImportError, AttributeError):
+    # Default to new API
     StrOrOpenAIObject = Union[str, Dict[str, Any]]
     OPENAI_OLD_API = False
 
 
 openai_org = os.getenv("OPENAI_ORG")
-if openai_org is not None:
-    openai.organization = openai_org
-    logging.warning(f"Switching to organization: {openai_org} for OAI API key.")
+# Note: Organization setting is handled per-client in new API, not globally
 
 
 @dataclasses.dataclass
@@ -133,7 +140,16 @@ def openai_completion(
                         choice["total_tokens"] = completion_batch.usage.total_tokens
                 else:
                     # Use new API format
-                    client = openai.OpenAI()
+                    # Get API key from environment or use default client
+                    api_key = os.getenv("OPENAI_API_KEY") or getattr(openai, 'api_key', None)
+                    openai_org = os.getenv("OPENAI_ORG")
+                    client_kwargs = {}
+                    if api_key:
+                        client_kwargs["api_key"] = api_key
+                    if openai_org:
+                        client_kwargs["organization"] = openai_org
+                        logging.warning(f"Switching to organization: {openai_org} for OAI API key.")
+                    client = openai.OpenAI(**client_kwargs) if client_kwargs else openai.OpenAI()
                     
                     if is_chat_model:
                         completion_batch = client.chat.completions.create(

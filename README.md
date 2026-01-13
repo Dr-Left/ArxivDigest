@@ -8,21 +8,22 @@ This repository provides an enhanced daily digest for newly published arXiv pape
 
 ## 📚 Contents
 
-- [Features](#-features)
-- [Quick Start](#-quick-start)
-- [What This Repo Does](#-what-this-repo-does)
-- [Model Integrations](#-model-integrations)
-- [Design Paper Discovery](#-design-paper-discovery)
-- [Output Formats](#-output-formats)
-- [Setting Up and Usage](#-setting-up-and-usage)
-  * [Configuration](#configuration)
-  * [Running the Web Interface](#running-the-web-interface)
-  * [Running via GitHub Action](#running-via-github-action)
-  * [Running from Command Line](#running-from-command-line)
-- [API Usage Notes](#-api-usage-notes)
-- [Directory Structure](#-directory-structure)
-- [Roadmap](#-roadmap)
-- [Contributing](#-contributing)
+- [ArXiv Digest (Enhanced Edition)](#arxiv-digest-enhanced-edition)
+  - [📚 Contents](#-contents)
+  - [✨ Features](#-features)
+  - [🚀 Quick Start](#-quick-start)
+  - [🔍 What This Repo Does](#-what-this-repo-does)
+  - [🤖 Model Integrations](#-model-integrations)
+  - [📊 Output Formats](#-output-formats)
+  - [💡 Setting Up and Usage](#-setting-up-and-usage)
+    - [Configuration](#configuration)
+    - [Running the Web Interface](#running-the-web-interface)
+    - [Running via GitHub Action](#running-via-github-action)
+    - [Running from Command Line](#running-from-command-line)
+  - [⚠️ API Usage Notes](#️-api-usage-notes)
+  - [📁 Directory Structure](#-directory-structure)
+  - [✅ Roadmap](#-roadmap)
+  - [💁 Contributing](#-contributing)
 
 ## ✨ Features
 
@@ -122,11 +123,54 @@ interest: |
 
 To run locally with the simplified UI:
 
-1. Install requirements: `pip install -r requirements.txt`
-2. Run the app: `python src/app_new.py` 
-3. Open the URL displayed in your terminal
-4. Enter your API key(s) and configure your preferences
-5. Use the relevancy threshold slider to adjust paper filtering (default is 2)
+1. **Clone the repository** (if you haven't already):
+   ```bash
+   git clone <repository-url>
+   cd ArxivDigest
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Configure your preferences** (optional):
+   - Edit `config.yaml` to set your research interests, categories, and threshold
+   - The default threshold is 2 (papers with score >= 2 will be shown)
+
+4. **Run the app**:
+   ```bash
+   python src/app_new.py
+   ```
+   Or use the provided script:
+   ```bash
+   ./run.sh
+   ```
+
+5. **Access the web interface**:
+   - The terminal will display a URL (typically `http://127.0.0.1:7860`)
+   - Open this URL in your web browser
+
+6. **Set up API keys** (choose one or more):
+   - **OpenAI**: Get your API key from [OpenAI Platform](https://platform.openai.com/account/api-keys)
+   - **Google Gemini**: Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - **Anthropic Claude**: Get your API key from [Anthropic Console](https://console.anthropic.com/)
+   
+   You can either:
+   - Enter API keys directly in the web interface, OR
+   - Set them as environment variables:
+     ```bash
+     export OPENAI_API_KEY="your-key-here"
+     export GEMINI_API_KEY="your-key-here"
+     export ANTHROPIC_API_KEY="your-key-here"
+     ```
+
+7. **Use the interface**:
+   - Select your research topic and categories
+   - Enter or paste your research interests
+   - Adjust the relevancy threshold slider (default is 2)
+   - Click "Generate Digest" to start processing
+   - Results will be displayed in the interface and saved to the `/digest` directory as HTML files
 
 ### Running via GitHub Action
 

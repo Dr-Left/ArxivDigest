@@ -23,6 +23,36 @@ def load_config():
 
 config = load_config()
 
+# Initialize API keys from environment variables
+def init_api_keys_from_env():
+    """Check environment variables for API keys and register them if found."""
+    openai_key = os.getenv("OPENAI_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    
+    if openai_key:
+        print("Found OPENAI_API_KEY in environment, registering...")
+        model_manager.register_openai(openai_key)
+        os.environ["OPENAI_API_KEY"] = openai_key
+    
+    if gemini_key:
+        print("Found GEMINI_API_KEY in environment, registering...")
+        setup_gemini_api(gemini_key)
+        model_manager.register_gemini(gemini_key)
+    
+    if anthropic_key:
+        print("Found ANTHROPIC_API_KEY in environment, registering...")
+        model_manager.register_anthropic(anthropic_key)
+    
+    return {
+        "openai": openai_key,
+        "gemini": gemini_key,
+        "anthropic": anthropic_key
+    }
+
+# Initialize API keys on startup
+api_keys = init_api_keys_from_env()
+
 # Helper function to filter papers by threshold
 def filter_papers_by_threshold(papers, threshold):
     """Filter papers by relevancy score threshold"""
@@ -594,10 +624,11 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
         
         if use_openai:
             if not model_manager.is_provider_available(ModelProvider.OPENAI):
-                if not openai.api_key:
+                api_key = os.getenv("OPENAI_API_KEY") or getattr(openai, 'api_key', None)
+                if not api_key:
                     raise gr.Error("Set your OpenAI API key in the OpenAI tab first")
                 else:
-                    model_manager.register_openai(openai.api_key)
+                    model_manager.register_openai(api_key)
             providers.append(ModelProvider.OPENAI)
             model_names[ModelProvider.OPENAI] = openai_model
             
@@ -895,9 +926,53 @@ def change_physics(subject):
         return {"visible": True}
 
 
+def filter_chat_models(models):
+    """Filter to only include chat-completion models (exclude embeddings, TTS, image, etc.)"""
+    chat_models = []
+    excluded_keywords = ['embedding', 'tts', 'whisper', 'dall-e', 'image', 'audio', 'realtime', 'transcribe', 'moderation', 'search']
+    
+    for model in models:
+        model_lower = model.lower()
+        # Only include models that start with 'gpt-' or 'o1' or 'o3' or 'o4' (chat models)
+        if (model.startswith('gpt-') or model.startswith('o1') or model.startswith('o3') or model.startswith('o4') or model.startswith('gpt-5')):
+            # Exclude models with excluded keywords anywhere in the name
+            if not any(keyword in model_lower for keyword in excluded_keywords):
+                chat_models.append(model)
+    
+    # Sort models: put latest/general models first, then dated versions
+    def sort_key(model):
+        # Prioritize models without dates, then by date (newer first)
+        if '-' not in model or model.count('-') == 1:
+            return (0, model)
+        parts = model.split('-')
+        # Try to extract date if present (format: YYYY-MM-DD)
+        if len(parts) >= 3:
+            try:
+                date_part = parts[-1]
+                if len(date_part) == 10 and date_part.replace('-', '').isdigit():
+                    return (1, date_part, model)
+            except:
+                pass
+        return (1, '9999-99-99', model)
+    
+    return sorted(chat_models, key=sort_key, reverse=True)
+
 def register_openai_token(token):
-    openai.api_key = token
-    model_manager.register_openai(token)
+    # Store API key for utils.py compatibility, but use client-based approach in model_manager
+    if not token or not token.strip():
+        return {"choices": ["gpt-4"], "value": "gpt-4"}
+    
+    os.environ["OPENAI_API_KEY"] = token
+    success = model_manager.register_openai(token)
+    if success:
+        available_models = model_manager.get_provider_models(ModelProvider.OPENAI)
+        chat_models = filter_chat_models(available_models)
+        if chat_models:
+            # Prefer gpt-4o or gpt-4 if available, otherwise use first model
+            preferred_models = ["gpt-4o", "gpt-4", "gpt-3.5-turbo-16k"]
+            default_model = next((m for m in preferred_models if m in chat_models), chat_models[0])
+            return {"choices": chat_models, "value": default_model}
+    return {"choices": ["gpt-4"], "value": "gpt-4"}
     
 def register_gemini_token(token):
     setup_gemini_api(token)
@@ -923,7 +998,7 @@ custom_css = """
 }
 """
 
-with gr.Blocks(css=custom_css) as demo:
+with gr.Blocks() as demo:
     with gr.Column():
         # Title first, then banner image
         with gr.Row():
@@ -947,25 +1022,55 @@ with gr.Blocks(css=custom_css) as demo:
             
         with gr.Tabs():
             with gr.TabItem("OpenAI"):
-                openai_token = gr.Textbox(label="OpenAI API Key", type="password")
-                openai_token.change(fn=register_openai_token, inputs=[openai_token])
+                openai_token = gr.Textbox(
+                    label="OpenAI API Key", 
+                    type="password",
+                    value=api_keys.get("openai", ""),
+                    placeholder="Enter API key or set OPENAI_API_KEY environment variable"
+                )
             
             with gr.TabItem("Gemini"):
-                gemini_token = gr.Textbox(label="Gemini API Key", type="password")
+                gemini_token = gr.Textbox(
+                    label="Gemini API Key", 
+                    type="password",
+                    value=api_keys.get("gemini", ""),
+                    placeholder="Enter API key or set GEMINI_API_KEY environment variable"
+                )
                 gemini_token.change(fn=register_gemini_token, inputs=[gemini_token])
             
             with gr.TabItem("Anthropic"):
-                anthropic_token = gr.Textbox(label="Anthropic API Key", type="password")
+                anthropic_token = gr.Textbox(
+                    label="Anthropic API Key", 
+                    type="password",
+                    value=api_keys.get("anthropic", ""),
+                    placeholder="Enter API key or set ANTHROPIC_API_KEY environment variable"
+                )
                 anthropic_token.change(fn=register_anthropic_token, inputs=[anthropic_token])
         
+        # Get default topic from config.yaml
+        default_topic = config.get("topic", "Computer Science")
+        if default_topic not in topics:
+            default_topic = list(topics.keys())[0]
+        
         subject = gr.Radio(
-            list(topics.keys()), label="Topic"
+            list(topics.keys()), label="Topic", value=default_topic
         )
         # Only show physics dropdown when Physics is selected
         physics_subject = gr.Dropdown(list(physics_topics.keys()), value=list(physics_topics.keys())[0], 
             multiselect=False, label="Physics category", visible=False)
+        
+        # Get default categories from config.yaml and initialize dropdown with correct choices
+        default_categories = config.get("categories", [])
+        if not isinstance(default_categories, list):
+            default_categories = []
+        
+        # Get available choices for the default topic
+        available_choices = categories_map.get(default_topic, [])
+        # Filter default categories to only include valid choices for the default topic
+        valid_defaults = [c for c in default_categories if c in available_choices]
+        
         subsubject = gr.Dropdown(
-            [], value=[], multiselect=True, 
+            available_choices, value=valid_defaults, multiselect=True, 
             label="Subtopic (optional)", info="Optional. Leaving it empty will use all subtopics.", visible=True)
 
         # Use interest from config.yaml as default value
@@ -982,7 +1087,20 @@ with gr.Blocks(css=custom_css) as demo:
             use_anthropic = gr.Checkbox(label="Use Claude", value=False)
         
         with gr.Accordion("Advanced Settings", open=False):
-            openai_model = gr.Dropdown(["gpt-3.5-turbo-16k", "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini"], value="gpt-4", label="OpenAI Model")
+            # Get available OpenAI models if API key is already registered
+            openai_models = ["gpt-4"]
+            openai_default = "gpt-4"
+            if api_keys.get("openai") and model_manager.is_provider_available(ModelProvider.OPENAI):
+                try:
+                    available_models = model_manager.get_provider_models(ModelProvider.OPENAI)
+                    chat_models = filter_chat_models(available_models)
+                    if chat_models:
+                        openai_models = chat_models
+                        preferred_models = ["gpt-4o", "gpt-4", "gpt-3.5-turbo-16k"]
+                        openai_default = next((m for m in preferred_models if m in chat_models), chat_models[0])
+                except:
+                    pass
+            openai_model = gr.Dropdown(openai_models, value=openai_default, label="OpenAI Model", info="Enter your OpenAI API key in the OpenAI tab to see available models")
             gemini_model = gr.Dropdown(["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"], value="gemini-2.0-flash", label="Gemini Model")
             anthropic_model = gr.Dropdown(["claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229", "claude-3.5-sonnet-20240620"], value="claude-3-sonnet-20240229", label="Claude Model")
             
@@ -1068,9 +1186,17 @@ with gr.Blocks(css=custom_css) as demo:
     # Connect change handlers for dynamic UI - use cleaner event handling
     def on_topic_change(topic):
         visible = (topic == "Physics")
+        # Get default categories from config.yaml for the selected topic
+        default_categories = config.get("categories", [])
+        if not isinstance(default_categories, list):
+            default_categories = []
+        # Only use default categories if they match the current topic
+        available_choices = categories_map.get(topic, [])
+        # Filter default_categories to only include valid choices for this topic
+        valid_defaults = [c for c in default_categories if c in available_choices]
         return {
             physics_subject: gr.update(visible=visible),
-            subsubject: gr.update(choices=categories_map.get(topic, []), visible=topic in categories_map)
+            subsubject: gr.update(choices=available_choices, value=valid_defaults, visible=topic in categories_map)
         }
         
     subject.change(fn=on_topic_change, inputs=[subject], outputs=[physics_subject, subsubject])
@@ -1078,7 +1204,14 @@ with gr.Blocks(css=custom_css) as demo:
     # Use simpler event handler for physics subtopic changing
     def on_physics_change(topic, physics_topic):
         if topic == "Physics" and physics_topic and physics_topic in categories_map:
-            return gr.update(choices=categories_map[physics_topic], visible=True)
+            # Get default categories from config.yaml
+            default_categories = config.get("categories", [])
+            if not isinstance(default_categories, list):
+                default_categories = []
+            # Filter to only include valid choices for this physics topic
+            available_choices = categories_map[physics_topic]
+            valid_defaults = [c for c in default_categories if c in available_choices]
+            return gr.update(choices=available_choices, value=valid_defaults, visible=True)
         return gr.update(visible=False)
         
     physics_subject.change(fn=on_physics_change, inputs=[subject, physics_subject], outputs=[subsubject])
@@ -1090,12 +1223,13 @@ with gr.Blocks(css=custom_css) as demo:
         outputs=sample_output
     )
     
-    # Register API keys
-    openai_token.change(fn=register_openai_token, inputs=[openai_token])
+    # Register event handlers for API key changes
+    # Note: API keys from environment are already registered in init_api_keys_from_env()
+    openai_token.change(fn=register_openai_token, inputs=[openai_token], outputs=[openai_model])
     gemini_token.change(fn=register_gemini_token, inputs=[gemini_token])
     anthropic_token.change(fn=register_anthropic_token, inputs=[anthropic_token])
     
     # Only allow updates when the button is clicked or interest is submitted directly
     interest.submit(fn=sample, inputs=all_inputs, outputs=sample_output)
 
-demo.launch(show_api=False)
+demo.launch(css=custom_css)
