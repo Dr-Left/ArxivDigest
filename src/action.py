@@ -223,7 +223,7 @@ category_map = {
 }
 
 
-def generate_body(topic, categories, interest, threshold):
+def generate_body(topic, categories, interest, max_papers):
     f_papers = []
     if topic == "Physics":
         raise RuntimeError("You must choose a physics subtopic.")
@@ -251,7 +251,7 @@ def generate_body(topic, categories, interest, threshold):
         relevancy, hallucination = generate_relevance_score(
             papers,
             query={"interest": interest},
-            threshold_score=threshold,
+            max_papers=max_papers,
             num_paper_in_prompt=2,
         )
 
@@ -310,9 +310,9 @@ if __name__ == "__main__":
     categories = config.get("categories", [])
     from_email = os.environ.get("FROM_EMAIL")
     to_email = os.environ.get("TO_EMAIL")
-    threshold = config["threshold"]
+    max_papers = config.get("max_papers", 10)
     interest = config["interest"]
-    body = generate_body(topic, categories, interest, threshold)
+    body = generate_body(topic, categories, interest, max_papers)
     today_date = get_date()
     with open(f"digest_{today_date}.html", "w") as f:
         f.write(body)

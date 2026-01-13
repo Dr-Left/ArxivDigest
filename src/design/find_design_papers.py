@@ -455,7 +455,7 @@ def analyze_papers_with_llm(papers: List[Dict[str, Any]], research_interest: str
             query={"interest": research_interest},
             providers=[ModelProvider.OPENAI],
             model_names={ModelProvider.OPENAI: "gpt-3.5-turbo-16k"},
-            threshold_score=0  # Include all papers, even low scored ones
+            max_papers=0  # Include all papers (no limit)
         )
         return analyzed_papers
     except Exception as e:

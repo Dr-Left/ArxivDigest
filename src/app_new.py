@@ -19,7 +19,7 @@ def load_config():
             return yaml.safe_load(file)
     except Exception as e:
         print(f"Error loading config: {e}")
-        return {"threshold": 2}  # Default threshold if config loading fails
+        return {"max_papers": 10}  # Default max_papers if config loading fails
 
 config = load_config()
 
@@ -53,11 +53,11 @@ def init_api_keys_from_env():
 # Initialize API keys on startup
 api_keys = init_api_keys_from_env()
 
-# Helper function to filter papers by threshold
-def filter_papers_by_threshold(papers, threshold):
-    """Filter papers by relevancy score threshold"""
-    print(f"\n===== FILTERING PAPERS =====")
-    print(f"Only showing papers with relevancy score >= {threshold}")
+# Helper function to filter papers by count (top N by score, keeping ties)
+def filter_papers_by_count(papers, max_papers):
+    """Filter papers to keep top N by score. If papers tie at cutoff, all are included."""
+    print(f"\n===== FILTERING PAPERS BY COUNT =====")
+    print(f"Max papers to keep: {max_papers} (0 = no limit)")
     print(f"(Change this value in config.yaml if needed)")
     
     # Debug the paper scores
@@ -113,10 +113,10 @@ def filter_papers_by_threshold(papers, threshold):
                         except:
                             pass
             
-            # If still no score, default to threshold to include paper
+            # If still no score, default to 5 (middle score)
             if "Relevancy score" not in paper:
-                paper["Relevancy score"] = threshold
-                print(f"  - Assigned default score {threshold}")
+                paper["Relevancy score"] = 5
+                print(f"  - Assigned default score 5")
                 
             # Add some reasonable defaults for missing fields
             if "Reasons for match" not in paper and "topic_classification" in gemini_data:
@@ -139,7 +139,7 @@ def filter_papers_by_threshold(papers, threshold):
                     paper["Relevancy score"] = int(paper["Relevancy score"])
             except (ValueError, TypeError):
                 print(f"WARNING: Could not convert score '{paper.get('Relevancy score')}' to integer for paper: {paper.get('title')}")
-                paper["Relevancy score"] = threshold  # Use threshold as default
+                paper["Relevancy score"] = 5  # Default to middle score
     
     # Make sure all papers have required fields
     required_fields = [
@@ -152,8 +152,8 @@ def filter_papers_by_threshold(papers, threshold):
     for paper in papers:
         # Make sure it has a relevancy score
         if "Relevancy score" not in paper:
-            paper["Relevancy score"] = threshold
-            print(f"Assigned default threshold score to paper: {paper.get('title')}")
+            paper["Relevancy score"] = 5
+            print(f"Assigned default score 5 to paper: {paper.get('title')}")
             
         # Add missing fields with default values - always ensure all fields exist
         for field in required_fields:
@@ -165,26 +165,29 @@ def filter_papers_by_threshold(papers, threshold):
                 paper[field] = f"Not available in the paper content"
                 print(f"Replaced placeholder for field {field} in paper: {paper.get('title')}")
     
-    # Now filter papers
-    filtered_papers = [p for p in papers if p.get("Relevancy score", 0) >= threshold]
-    print(f"After filtering: {len(filtered_papers)} papers remain out of {len(papers)}")
+    # Sort papers by score (descending)
+    papers.sort(key=lambda p: p.get("Relevancy score", 0), reverse=True)
     
-    # If fewer than 10 papers passed the filter, add the highest-scoring papers below threshold
-    # This ensures we always show a reasonable number of papers
-    if len(filtered_papers) < 10 and len(papers) > len(filtered_papers):
-        print(f"WARNING: Only {len(filtered_papers)} papers passed the threshold filter. Adding more papers.")
-        # Sort remaining papers by score and add the highest scoring ones
-        remaining_papers = [p for p in papers if p not in filtered_papers]
-        remaining_papers.sort(key=lambda x: x.get("Relevancy score", 0), reverse=True)
-        # Add enough papers to get to 10 or all remaining papers, whichever is less
-        additional_count = min(10 - len(filtered_papers), len(remaining_papers))
-        filtered_papers.extend(remaining_papers[:additional_count])
-        print(f"Added {additional_count} additional papers below threshold. Total papers: {len(filtered_papers)}")
+    # If no limit, return all papers
+    if max_papers <= 0:
+        print(f"No paper limit set, returning all {len(papers)} papers")
+        return papers
     
-    # Fallback if no papers passed the filter
-    if len(filtered_papers) == 0 and len(papers) > 0:
-        print("WARNING: No papers passed the threshold filter. Using all papers.")
-        filtered_papers = papers
+    # If we have fewer papers than max, return all
+    if len(papers) <= max_papers:
+        print(f"Total papers ({len(papers)}) <= max_papers ({max_papers}), returning all")
+        return papers
+    
+    # Find the cutoff score (score of the Nth paper)
+    cutoff_score = papers[max_papers - 1].get("Relevancy score", 0)
+    print(f"Cutoff score at position {max_papers}: {cutoff_score}")
+    
+    # Include all papers with score >= cutoff_score (handles ties)
+    filtered_papers = [p for p in papers if p.get("Relevancy score", 0) >= cutoff_score]
+    
+    print(f"After filtering: {len(filtered_papers)} papers (max_papers={max_papers}, cutoff_score={cutoff_score})")
+    if len(filtered_papers) > max_papers:
+        print(f"Note: {len(filtered_papers) - max_papers} additional papers included due to score ties at {cutoff_score}")
         
     return filtered_papers
 from design_automation import (
@@ -361,7 +364,7 @@ def generate_html_report(papers, title="ArXiv Digest Results", topic=None, categ
             <p>Generated on {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
             <p>Found {len(papers)} papers</p>
             <p>Topics: {topic or "All"}</p>
-            <p>Threshold: {query.get("threshold", config.get("threshold", "Not specified"))}</p>
+            <p>Max Papers: {query.get("max_papers", config.get("max_papers", "Not specified"))}</p>
         </div>
         
         <div class="interests">
@@ -384,15 +387,15 @@ def generate_html_report(papers, title="ArXiv Digest Results", topic=None, categ
         <div class="paper">
             <div class="title">No papers found matching your criteria</div>
             <div class="abstract">
-                <p>No papers met the relevancy threshold criteria. You can:</p>
+                <p>No papers were found. You can:</p>
                 <ul>
-                    <li>Lower the threshold using the slider in Advanced Settings (currently set to {threshold})</li>
+                    <li>Increase the max papers limit using the slider in Advanced Settings (currently set to {max_papers})</li>
                     <li>Try different research interests</li>
                     <li>Check different categories or topics</li>
                 </ul>
             </div>
         </div>
-        """.format(threshold=config.get("threshold", 2))
+        """.format(max_papers=config.get("max_papers", 10))
     
     # Add papers
     for i, paper in enumerate(papers):
@@ -570,13 +573,13 @@ def generate_html_report(papers, title="ArXiv Digest Results", topic=None, categ
     return html_file
 
 def sample(email, topic, physics_topic, categories, interest, use_openai, use_gemini, use_anthropic, 
-           openai_model, gemini_model, anthropic_model, special_analysis, threshold_from_ui, custom_batch_size, custom_batch_number, 
+           openai_model, gemini_model, anthropic_model, special_analysis, max_papers_from_ui, custom_batch_size, custom_batch_number, 
            custom_prompt_batch_size, mechanistic_interpretability, technical_ai_safety, 
            design_automation, design_reference_paper, design_techniques, design_categories):
     print(f"\n===== STARTING TWO-STAGE PAPER ANALYSIS =====")
     print(f"Topic: {topic}")
     print(f"Research interests: {interest[:100]}...")
-    print(f"Using threshold: {threshold_from_ui}")
+    print(f"Max papers: {max_papers_from_ui}")
     print(f"Stage 1 (Filtering): OpenAI {openai_model}")
     print(f"Stage 2 (Analysis): {'Gemini ' + gemini_model if use_gemini else 'OpenAI ' + openai_model}")
     print(f"UI Batch size: {custom_batch_size} papers")
@@ -614,8 +617,8 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
     
     # Fixed parameters:
     # - Stage 1: 8 papers per batch for relevancy scoring (title & abstract only)
-    # - Stage 2: Detailed analysis of papers that meet threshold
-    # - Minimum 10 papers (will include top-scoring papers below threshold if needed)
+    # - Stage 2: Detailed analysis of top papers by score
+    # - Papers with tied scores at the cutoff are all included
     
     if interest:
         # Build list of providers to use
@@ -692,7 +695,7 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
                     papers,
                     query={"interest": interest},
                     model_name=openai_model,
-                    threshold_score=int(threshold_from_ui),  # Apply threshold from UI slider
+                    max_papers=int(max_papers_from_ui),  # Apply max papers limit from UI slider
                     num_paper_in_prompt=int(custom_prompt_batch_size),  # Use the user-specified prompt batch size
                     stage2_model=gemini_model if use_gemini else "gpt-4-turbo"  # Use Gemini for stage 2 if selected
                 )
@@ -748,13 +751,13 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
         
         print(f"Total papers after analysis: {len(relevancy)}")
         
-        # Papers are already filtered by threshold during LLM response processing
+        # Papers are already filtered by count during LLM response processing
         # This is now just a safety check to ensure we didn't miss any
-        threshold_value = int(threshold_from_ui) if threshold_from_ui is not None else config.get("threshold", 2)
-        print(f"Using relevancy threshold: {threshold_value}")
-        print(f"Papers before final threshold check: {len(relevancy)}")
-        relevancy = filter_papers_by_threshold(relevancy, threshold_value)
-        print(f"Papers after final threshold check: {len(relevancy)}")
+        max_papers_value = int(max_papers_from_ui) if max_papers_from_ui is not None else config.get("max_papers", 10)
+        print(f"Using max papers limit: {max_papers_value}")
+        print(f"Papers before final count filter: {len(relevancy)}")
+        relevancy = filter_papers_by_count(relevancy, max_papers_value)
+        print(f"Papers after final count filter: {len(relevancy)}")
         
         # Add design automation information if requested
         if design_automation and relevancy:
@@ -851,7 +854,7 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
                 relevancy, 
                 title=f"ArXiv Digest: {topic} papers",
                 topic=topic,
-                query={"interest": interest, "threshold": threshold_value}
+                query={"interest": interest, "max_papers": max_papers_value}
             )
             
             # Create summary texts for display
@@ -875,7 +878,7 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
                 relevancy, 
                 title=f"ArXiv Digest: {topic} papers",
                 topic=topic,
-                query={"interest": interest, "threshold": threshold_value}
+                query={"interest": interest, "max_papers": max_papers_value}
             )
             
             # Create summary texts for display
@@ -899,7 +902,7 @@ def sample(email, topic, physics_topic, categories, interest, use_openai, use_ge
             papers, 
             title=f"ArXiv Digest: {topic} papers",
             topic=topic,
-            query={"interest": interest, "threshold": threshold_from_ui if "threshold_from_ui" in locals() else config.get("threshold", 2)}
+            query={"interest": interest, "max_papers": max_papers_from_ui if "max_papers_from_ui" in locals() else config.get("max_papers", 10)}
         )
         result_text = "\n\n".join(f"Title: {paper['title']}\nAuthors: {paper['authors']}" for paper in papers)
         return result_text + f"\n\nHTML report saved to: {html_file}"
@@ -1107,14 +1110,14 @@ with gr.Blocks() as demo:
             # Always include specialized analysis by default
             special_analysis = gr.Checkbox(label="Include specialized analysis for research topics", value=True)
             
-            # Add threshold slider for relevancy filtering
-            threshold = gr.Slider(
+            # Add max papers slider for filtering
+            max_papers_slider = gr.Slider(
                 minimum=0,
-                maximum=10,
-                value=config.get("threshold", 2),
+                maximum=50,
+                value=config.get("max_papers", 10),
                 step=1,
-                label="Relevancy Score Threshold",
-                info="Papers with scores below this value will be filtered out (default from config.yaml: " + str(config.get("threshold", 2)) + ")"
+                label="Maximum Papers to Keep",
+                info="Top N papers by score will be kept. Papers with tied scores at cutoff are all included. 0 = no limit. (default from config.yaml: " + str(config.get("max_papers", 10)) + ")"
             )
             
             # Hidden fields with fixed defaults (not shown in UI)
@@ -1125,8 +1128,8 @@ with gr.Blocks() as demo:
             # Multi-stage processing info
             gr.Markdown("""
             ### Two-Stage Paper Processing
-            1. **Stage 1**: OpenAI performs quick relevancy filtering based on title & abstract only
-            2. **Stage 2**: Gemini (if selected) performs detailed analysis on papers that passed threshold
+            1. **Stage 1**: OpenAI scores all papers based on title & abstract, then top N are selected
+            2. **Stage 2**: Gemini (if selected) performs detailed analysis on selected papers
             """)
             
             # Add two-stage processing explanation
@@ -1178,7 +1181,7 @@ with gr.Blocks() as demo:
         email, subject, physics_subject, subsubject, interest, 
         use_openai, use_gemini, use_anthropic,
         openai_model, gemini_model, anthropic_model,
-        special_analysis, threshold, batch_size, batch_number, prompt_batch_size,
+        special_analysis, max_papers_slider, batch_size, batch_number, prompt_batch_size,
         mechanistic_interpretability, technical_ai_safety,
         design_automation, design_reference_paper, design_techniques, design_categories
     ]

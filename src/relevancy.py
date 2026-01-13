@@ -301,20 +301,19 @@ def filter_papers_by_relevance(
     all_papers,
     query,
     model_name="gpt-3.5-turbo-16k",
-    threshold_score=2,
     num_paper_in_prompt=8,  # Fixed at 8 papers per prompt as requested
     temperature=0.3,  # Lower temperature for more consistent relevancy scoring
     top_p=1.0,
-    max_papers=10  # Try to find at least this many papers that meet the threshold
+    max_papers=10  # Maximum number of papers to keep (0 = no limit)
 ):
     """
-    Stage 1: Filter papers by relevance using only title and abstract
-    Returns only papers that meet or exceed the threshold score
+    Stage 1: Score all papers by relevance using only title and abstract
+    Returns top N papers ranked by score. If papers tie at the cutoff, all are included.
     """
-    filtered_papers = []
-    print(f"\n===== STAGE 1: FILTERING PAPERS BY RELEVANCE (THRESHOLD >= {threshold_score}) =====")
+    scored_papers = []
+    print(f"\n===== STAGE 1: SCORING PAPERS BY RELEVANCE (MAX PAPERS: {max_papers}) =====")
     
-    for id in tqdm.tqdm(range(0, len(all_papers), num_paper_in_prompt), desc="Stage 1: Relevancy filtering"):
+    for id in tqdm.tqdm(range(0, len(all_papers), num_paper_in_prompt), desc="Stage 1: Relevancy scoring"):
         batch_papers = all_papers[id:id+num_paper_in_prompt]
         
         # Create prompt without content for quick relevancy filtering
@@ -339,92 +338,57 @@ def filter_papers_by_relevance(
         request_duration = time.time() - request_start
         print(f"Stage 1 batch took {request_duration:.2f}s")
         
-        # Extract just the relevancy scores
+        # Extract all relevancy scores (no threshold filtering)
         process_start = time.time()
         batch_data, _ = post_process_chat_gpt_response(
             batch_papers, 
             response, 
-            threshold_score=0  # Don't filter yet, we want all scores
+            threshold_score=0  # Get all scores without filtering
         )
         
-        # Keep only papers that meet or exceed the threshold
-        # Make sure we have the same number of scores as papers
-        if len(batch_data) != len(batch_papers):
-            print(f"WARNING: Mismatch between batch_data ({len(batch_data)}) and batch_papers ({len(batch_papers)})")
-            # If we have different counts, we need to match papers to scores
-            # This handles cases where not all papers got scores
-            
-            # Create a map of titles to papers for easier lookup
-            title_to_paper = {p["title"]: p for p in batch_papers}
-            
-            # Match scores to papers
-            for paper in batch_data:
-                if "title" in paper and paper["title"] in title_to_paper:
-                    # Found a match by title
-                    relevancy_score = paper.get("Relevancy score", 0)
-                    if isinstance(relevancy_score, str):
-                        try:
-                            if '/' in relevancy_score:
-                                relevancy_score = int(relevancy_score.split('/')[0])
-                            else:
-                                relevancy_score = int(relevancy_score)
-                        except (ValueError, TypeError):
-                            relevancy_score = 0
-                            
-                    if relevancy_score >= threshold_score:
-                        print(f"PASSED: Paper '{paper['title'][:50]}...' with score {relevancy_score}")
-                        filtered_papers.append(paper)
+        # Normalize scores and add to scored_papers
+        for paper in batch_data:
+            relevancy_score = paper.get("Relevancy score", 0)
+            if isinstance(relevancy_score, str):
+                try:
+                    if '/' in relevancy_score:
+                        relevancy_score = int(relevancy_score.split('/')[0])
                     else:
-                        print(f"FILTERED OUT: Paper '{paper['title'][:50]}...' with score {relevancy_score}")
-        else:
-            # We have the expected number of scores
-            for paper in batch_data:
-                relevancy_score = paper.get("Relevancy score", 0)
-                if isinstance(relevancy_score, str):
-                    try:
-                        if '/' in relevancy_score:
-                            relevancy_score = int(relevancy_score.split('/')[0])
-                        else:
-                            relevancy_score = int(relevancy_score)
-                    except (ValueError, TypeError):
-                        relevancy_score = 0
-                        
-                if relevancy_score >= threshold_score:
-                    print(f"PASSED: Paper '{paper['title'][:50]}...' with score {relevancy_score}")
-                    filtered_papers.append(paper)
-                else:
-                    print(f"FILTERED OUT: Paper '{paper['title'][:50]}...' with score {relevancy_score}")
+                        relevancy_score = int(relevancy_score)
+                except (ValueError, TypeError):
+                    relevancy_score = 0
+            paper["Relevancy score"] = relevancy_score
+            scored_papers.append(paper)
+            print(f"SCORED: Paper '{paper['title'][:50]}...' with score {relevancy_score}")
                 
         print(f"Post-processing took {time.time() - process_start:.2f}s")
-        print(f"Filtered papers so far: {len(filtered_papers)} out of {id + len(batch_papers)}")
+        print(f"Scored papers so far: {len(scored_papers)} out of {id + len(batch_papers)}")
     
-    print(f"\nStage 1 complete: {len(filtered_papers)} papers met the threshold of {threshold_score} out of {len(all_papers)}")
+    print(f"\nStage 1 scoring complete: {len(scored_papers)} papers scored out of {len(all_papers)}")
     
-    # If we didn't find enough papers, adjust threshold downward and include more
-    if len(filtered_papers) < max_papers and threshold_score > 1:
-        # Find the highest-scored papers that didn't meet the threshold
-        remaining_scores = {}
-        for paper in all_papers:
-            if paper not in filtered_papers:
-                score = paper.get("Relevancy score", 0)
-                if isinstance(score, str):
-                    try:
-                        score = int(score)
-                    except (ValueError, TypeError):
-                        score = 0
-                remaining_scores[paper] = score
-        
-        # Sort the remaining papers by score (descending)
-        sorted_papers = sorted(remaining_scores.keys(), key=lambda p: remaining_scores[p], reverse=True)
-        
-        # Add the highest-scored papers until we reach max_papers or run out of papers
-        papers_to_add = sorted_papers[:max_papers - len(filtered_papers)]
-        for paper in papers_to_add:
-            score = remaining_scores[paper]
-            print(f"Adding paper '{paper['title'][:50]}...' with score {score} (below threshold) to meet minimum paper count")
-            filtered_papers.append(paper)
-        
-        print(f"Added {len(papers_to_add)} papers below threshold to reach {len(filtered_papers)} total papers")
+    # Sort papers by score (descending)
+    scored_papers.sort(key=lambda p: p.get("Relevancy score", 0), reverse=True)
+    
+    # If no limit, return all scored papers
+    if max_papers <= 0:
+        print(f"No paper limit set, returning all {len(scored_papers)} scored papers")
+        return scored_papers
+    
+    # Apply paper count limit with tie handling
+    if len(scored_papers) <= max_papers:
+        print(f"Total papers ({len(scored_papers)}) <= max_papers ({max_papers}), returning all")
+        return scored_papers
+    
+    # Find the cutoff score (score of the Nth paper)
+    cutoff_score = scored_papers[max_papers - 1].get("Relevancy score", 0)
+    print(f"Cutoff score at position {max_papers}: {cutoff_score}")
+    
+    # Include all papers with score >= cutoff_score (handles ties)
+    filtered_papers = [p for p in scored_papers if p.get("Relevancy score", 0) >= cutoff_score]
+    
+    print(f"\nFiltered to {len(filtered_papers)} papers (max_papers={max_papers}, cutoff_score={cutoff_score})")
+    if len(filtered_papers) > max_papers:
+        print(f"Note: {len(filtered_papers) - max_papers} additional papers included due to score ties at {cutoff_score}")
     
     return filtered_papers
 
@@ -496,29 +460,30 @@ def generate_relevance_score(
     all_papers,
     query,
     model_name="gpt-3.5-turbo-16k",
-    threshold_score=2,
+    max_papers=10,  # Maximum number of papers to keep (0 = no limit)
     num_paper_in_prompt=8,  # Fixed at 8 papers per prompt
     temperature=0.4,
     top_p=1.0,
     sorting=True,
     stage2_model="gemini-1.5-flash",  # Model to use for Stage 2
-    min_papers=10  # Minimum number of papers to return
 ):
     """
     Two-stage paper processing:
-    1. Filter papers by relevance using OpenAI (fast, based on title/abstract)
-    2. Analyze relevant papers in depth using Gemini (detailed, includes content)
+    1. Score and rank papers by relevance using OpenAI (fast, based on title/abstract)
+    2. Analyze top papers in depth using Gemini (detailed, includes content)
+    
+    Papers are ranked by score and top max_papers are kept.
+    If papers tie at the cutoff score, all tied papers are included.
     """
-    # Stage 1: Filter by relevance (OpenAI)
+    # Stage 1: Score and rank papers by relevance (OpenAI)
     filtered_papers = filter_papers_by_relevance(
         all_papers,
         query,
         model_name=model_name,
-        threshold_score=threshold_score,
         num_paper_in_prompt=num_paper_in_prompt,
         temperature=temperature,
         top_p=top_p,
-        max_papers=min_papers  # Ensure we get at least this many papers
+        max_papers=max_papers
     )
     
     # If no papers passed the threshold, return empty results
@@ -590,7 +555,7 @@ def run_all_day_paper(
     query={"interest":"Computer Science", "subjects":["Machine Learning", "Computation and Language", "Artificial Intelligence", "Information Retrieval"]},
     date=None,
     model_name="gpt-3.5-turbo-16k",
-    threshold_score=7,
+    max_papers=10,
     num_paper_in_prompt=2,
     temperature=0.4,
     top_p=1.0
@@ -609,7 +574,7 @@ def run_all_day_paper(
         if bool(set(process_subject_fields(t['subjects'])) & set(query['subjects']))
     ]
     print(f"After filtering subjects, we have {len(all_papers_in_subjects)} papers left.")
-    ans_data = generate_relevance_score(all_papers_in_subjects, query, model_name, threshold_score, num_paper_in_prompt, temperature, top_p)
+    ans_data = generate_relevance_score(all_papers_in_subjects, query, model_name, max_papers, num_paper_in_prompt, temperature, top_p)
     from paths import DIGEST_DIR
     utils.write_ans_to_file(ans_data, date, output_dir=DIGEST_DIR)
     return ans_data

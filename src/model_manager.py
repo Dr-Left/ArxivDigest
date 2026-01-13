@@ -122,7 +122,7 @@ class ModelManager:
         query: Dict[str, str],
         providers: List[ModelProvider] = None,
         model_names: Dict[ModelProvider, str] = None,
-        threshold_score: int = 7,
+        max_papers: int = 10,
     ) -> Tuple[List[Dict[str, Any]], bool]:
         """
         Analyze papers using multiple model providers.
@@ -132,7 +132,7 @@ class ModelManager:
             query: Dictionary with 'interest' key describing research interests
             providers: List of providers to use (defaults to all available)
             model_names: Dictionary mapping providers to model names
-            threshold_score: Minimum score for a paper to be considered relevant
+            max_papers: Maximum number of papers to keep (0 = no limit)
             
         Returns:
             Tuple of (list of papers with analysis, hallucination flag)
@@ -171,7 +171,7 @@ class ModelManager:
                     papers,
                     query=query,
                     model_name=model_names[ModelProvider.OPENAI],
-                    threshold_score=threshold_score,
+                    max_papers=max_papers,
                     num_paper_in_prompt=2
                 )
                 hallucination = hallucination or hallu
